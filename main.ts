@@ -3,17 +3,31 @@
  * Entry point for the "Leonida Drawbridge Jump" clipper entry.
  *
  * What it does:
- *   1. Loads VIDEO.json from this script's own directory.
+ *   1. Loads VIDEO.json from the bot directory (see the harness contract
+ *      below), which outside the harness is this script's own directory.
  *   2. Checks that the `url` field really points at a YouTube video
  *      (a /shorts/<id> link, a /watch?v=<id> link, or a youtu.be/<id> link).
  *      When the URL is rejected, the error message names the exact problem
  *      (unparseable, wrong host, unsupported path, malformed id, ...).
- *   3. Copies VIDEO.json into the output directory: `--out <dir>` (or
+ *   3. Copies VIDEO.json into the output directory: the harness output
+ *      directory when one is set (see below), else `--out <dir>` (or
  *      `--out=<dir>`), else the first positional argument, else ./output
  *      next to this script.
  *   4. Re-reads the copy and compares its bytes with the source, so a
  *      truncated or corrupted copy is reported instead of passing silently,
  *      then prints a one-line summary of what was copied and for which video.
+ *
+ * Harness contract (make.fun grade run): the grader runs this program as
+ * `node /bot/main.ts` with NO arguments, the repository mounted READ-ONLY
+ * at /bot, and a separate writable output directory at /output. It points
+ * MAKEFUN_BOT_DIR at the repository and MAKEFUN_OUTPUT_DIR at the output
+ * directory, and the working directory is not the repository. So:
+ *   - MAKEFUN_BOT_DIR, when set, says where VIDEO.json lives.
+ *   - MAKEFUN_OUTPUT_DIR, when set, wins over every command-line choice,
+ *     because the default ./output next to this script sits inside the
+ *     read-only repository and creating it there would fail.
+ * When those variables are set this program never writes into the
+ * repository directory; it only reads VIDEO.json from it.
  *
  * Standard library only. No network access is needed or performed.
  */
@@ -27,7 +41,11 @@ interface VideoManifest {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const manifestPath = join(here, "VIDEO.json");
+// The harness mounts the repository read-only and names it through
+// MAKEFUN_BOT_DIR; outside the harness the manifest sits next to this
+// script, as before. An empty value counts as unset.
+const botDir = process.env.MAKEFUN_BOT_DIR || here;
+const manifestPath = join(botDir, "VIDEO.json");
 
 // Hosts that legitimately serve YouTube watch/shorts pages.
 const YOUTUBE_HOSTS = new Set([
@@ -48,7 +66,7 @@ function fail(message: string): never {
 
 function readManifest(path: string): VideoManifest {
   if (!existsSync(path)) {
-    fail(`VIDEO.json not found next to main.ts (looked in ${here})`);
+    fail(`VIDEO.json not found in the bot directory (looked in ${botDir})`);
   }
   let parsed: unknown;
   try {
@@ -127,9 +145,12 @@ function youtubeVideoId(raw: string): UrlVerdict {
 }
 
 /**
- * Picks the output directory from the command line: `--out <dir>` or
- * `--out=<dir>` wins, then the first positional argument, then ./output
- * next to this script. Unknown flags are rejected with a usage hint.
+ * Picks the output directory. MAKEFUN_OUTPUT_DIR, when set, wins over
+ * everything: the harness points it at the writable output directory,
+ * while the repository (and so the ./output default below) is read-only.
+ * Otherwise the command line decides: `--out <dir>` or `--out=<dir>`
+ * wins, then the first positional argument, then ./output next to this
+ * script. Unknown flags are rejected with a usage hint.
  */
 function parseOutDir(argv: string[]): string {
   let chosen: string | undefined;
@@ -152,6 +173,10 @@ function parseOutDir(argv: string[]): string {
     } else if (chosen === undefined) {
       chosen = arg;
     }
+  }
+  const envOutDir = process.env.MAKEFUN_OUTPUT_DIR;
+  if (envOutDir) {
+    return resolve(envOutDir);
   }
   return resolve(chosen ?? join(here, "output"));
 }
